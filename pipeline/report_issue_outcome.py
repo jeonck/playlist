@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULT_FILE = ROOT / "pipeline" / ".run-result.json"
+STATUS_LABELS = {"pending-review", "approved", "published", "failed"}
 
 
 def gh(*args: str, check: bool = True) -> None:
@@ -38,13 +39,13 @@ def main() -> int:
     status = data.get("status")
     if status == "success":
         body = f"✅ Published under **{data['category']}**: {data['url']}"
-        add, remove, close = ["published"], ["approved", "pending-review"], True
+        add, close = "published", True
     elif status == "skipped_duplicate":
         body = (
             f"ℹ️ This video was already published under **{data.get('category', '?')}**: "
             f"{data.get('url', '')}"
         )
-        add, remove, close = ["published"], ["approved", "pending-review"], True
+        add, close = "published", True
     else:
         reason = data.get("reason", "unknown error")
         body = (
@@ -52,13 +53,12 @@ def main() -> int:
             "The `approved` label has been removed. Fix the request (e.g. use a video "
             "that has English captions) and re-add the `approved` label to retry."
         )
-        add, remove, close = ["failed"], ["approved"], False
+        add, close = "failed", False
 
     gh("issue", "comment", number, "--repo", repo, "--body", body)
-    for label in add:
-        gh("issue", "edit", number, "--repo", repo, "--add-label", label)
-    for label in remove:
+    for label in STATUS_LABELS - {add}:
         gh("issue", "edit", number, "--repo", repo, "--remove-label", label, check=False)
+    gh("issue", "edit", number, "--repo", repo, "--add-label", add)
     if close:
         gh("issue", "close", number, "--repo", repo)
     return 0

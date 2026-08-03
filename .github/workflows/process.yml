@@ -69,12 +69,15 @@ jobs:
         # ("Sign in to confirm you're not a bot") regardless of which player client
         # yt-dlp emulates — an authenticated session's cookies is the only reliable
         # workaround. See README "Handling YouTube's bot-check" for how to set this up.
-        if: ${{ secrets.YT_COOKIES != '' }}
+        # NOTE: the `secrets` context isn't available in a step `if:` condition, so
+        # this step always runs and no-ops in the shell when the secret is unset.
         env:
           YT_COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
-          printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
-          echo "YT_COOKIES_FILE=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+          if [ -n "$YT_COOKIES" ]; then
+            printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+            echo "YT_COOKIES_FILE=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+          fi
 
       - name: Generate study post
         id: generate
@@ -124,9 +127,9 @@ jobs:
     steps:
       - name: Install Hugo CLI
         run: |
-          wget -O ${{ runner.temp }}/hugo.deb \
-            https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb \
-          && sudo dpkg -i ${{ runner.temp }}/hugo.deb
+          wget -O "${{ runner.temp }}/hugo.deb" \
+            "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb" \
+          && sudo dpkg -i "${{ runner.temp }}/hugo.deb"
 
       - uses: actions/checkout@v4
         with:

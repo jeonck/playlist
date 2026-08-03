@@ -1,0 +1,27 @@
+name: "📺 New YouTube Study Request"
+description: Submit a YouTube video to turn into an English study post
+title: "[Study Request] "
+labels: ["youtube-request", "pending-review"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the request! Anyone can submit one — a maintainer reviews it
+        before anything is processed. You'll get a comment here once it's approved
+        (or if something went wrong, e.g. the video has no English captions).
+  - type: input
+    id: youtube_url
+    attributes:
+      label: YouTube URL
+      description: Link to the YouTube video you want turned into a study post
+      placeholder: "https://www.youtube.com/watch?v=..."
+    validations:
+      required: true
+  - type: textarea
+    id: note
+    attributes:
+      label: Notes for the study post (optional)
+      description: Anything you'd like the post to focus on (e.g. business vocabulary, a certain scene)
+      placeholder: "Optional — leave blank for a general study post"
+    validations:
+      required: false

@@ -1,0 +1,77 @@
+baseURL = "https://playlist.metacog.co.kr/"
+title = "Playlist — YouTube English Study"
+theme = "hextra"
+defaultContentLanguage = "en"
+enableRobotsTXT = true
+enableGitInfo = false
+hasCJKLanguage = false
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true
+
+[outputs]
+  home = ["html"]
+  page = ["html"]
+  section = ["html", "rss"]
+
+[params]
+  description = "Turn any YouTube video into a structured English study post — idioms, vocabulary, natural phrasing, and a quiz."
+  displayUpdatedDate = true
+  dateFormat = "January 2, 2006"
+
+  [params.navbar]
+    displayTitle = true
+    displayLogo = false
+    width = "full"
+
+  [params.page]
+    width = "normal"
+
+  [params.theme]
+    default = "system"
+    displayToggle = true
+
+  [params.footer]
+    enable = true
+    displayCopyright = true
+    displayPoweredBy = false
+    width = "normal"
+
+  [params.search]
+    enable = true
+    type = "flexsearch"
+    [params.search.flexsearch]
+      index = "content"
+      tokenize = "forward"
+
+  [params.toc]
+    displayTags = true
+
+  [params.highlight.copy]
+    enable = true
+    display = "hover"
+
+[[menu.main]]
+  name = "Search"
+  weight = 0
+  [menu.main.params]
+    type = "search"
+
+[[menu.main]]
+  name = "Categories"
+  pageRef = "/docs"
+  weight = 1
+
+[[menu.main]]
+  name = "Request a Video ↗"
+  url = "https://github.com/jeonck/playlist/issues/new?template=youtube-request.yml"
+  weight = 10
+
+[[menu.main]]
+  name = "GitHub"
+  url = "https://github.com/jeonck/playlist"
+  weight = 99
+  [menu.main.params]
+    icon = "github"

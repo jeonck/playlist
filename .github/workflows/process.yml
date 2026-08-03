@@ -1,0 +1,138 @@
+name: Process approved YouTube request
+
+# Only fires on the `approved` label. Adding labels requires write access to the
+# repo, so an external requester cannot self-approve their own issue — but GitHub's
+# finer-grained "Triage" role can also add labels without full write access, so as
+# defense-in-depth this workflow additionally checks the label-adder's username
+# against MAINTAINER_LOGINS below. Add more GitHub usernames to that JSON array to
+# grant them approval rights.
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write
+  issues: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: playlist-process-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  reject-unauthorized:
+    if: >
+      github.event.label.name == 'approved' &&
+      !contains(fromJson('["jeonck"]'), github.event.sender.login)
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue comment "${{ github.event.issue.number }}" --repo "${{ github.repository }}" \
+            --body "⚠️ The \`approved\` label was added by @${{ github.event.sender.login }}, who isn't an authorized maintainer for this pipeline. Removing it — a maintainer needs to add it instead."
+          gh issue edit "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --remove-label "approved"
+
+  generate:
+    if: >
+      github.event.label.name == 'approved' &&
+      contains(fromJson('["jeonck"]'), github.event.sender.login)
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pipeline/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Parse issue body
+        id: fields
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: python3 pipeline/parse_issue.py
+
+      - name: Generate study post
+        id: generate
+        continue-on-error: true
+        env:
+          YOUTUBE_URL: ${{ steps.fields.outputs.youtube_url }}
+          REQUEST_NOTE: ${{ steps.fields.outputs.note }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          # CLAUDE_CODE_OAUTH_TOKEN 등록 시 구독 인증(claude-code), 없으면 API 키 과금(api)
+          JUDGE_BACKEND: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' && 'claude-code' || 'api' }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python pipeline/generate.py
+
+      - name: Commit new post
+        id: commit
+        if: steps.generate.outcome == 'success'
+        run: |
+          git config user.name "playlist-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add content/docs pipeline/state.json
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "신규 포스트 없음 — 커밋 스킵 (중복 영상)"
+          else
+            git commit -m "content: study post from issue #${{ github.event.issue.number }}"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report outcome on issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: python3 pipeline/report_issue_outcome.py
+
+  deploy:
+    needs: generate
+    if: ${{ !cancelled() && needs.generate.outputs.changed == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      HUGO_VERSION: 0.161.1
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Install Hugo CLI
+        run: |
+          wget -O ${{ runner.temp }}/hugo.deb \
+            https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb \
+          && sudo dpkg -i ${{ runner.temp }}/hugo.deb
+
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - name: Build site
+        env:
+          HUGO_CACHEDIR: ${{ runner.temp }}/hugo_cache
+          HUGO_ENVIRONMENT: production
+        run: hugo --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

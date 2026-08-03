@@ -1,0 +1,64 @@
+name: Deploy Hugo to GitHub Pages
+
+# Rebuilds for the initial push and any human-made edits (docs, hugo.toml, theme).
+# Bot commits made by process.yml's `generate` job use the default GITHUB_TOKEN,
+# which GitHub deliberately does NOT re-trigger push-based workflows with — so
+# process.yml builds+deploys in the same run instead of relying on this file for
+# that path. This workflow only ever fires for pushes made by an actual person.
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "content/**"
+      - "hugo.toml"
+      - "themes/**"
+      - "static/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      HUGO_VERSION: 0.161.1
+    steps:
+      - name: Install Hugo CLI
+        run: |
+          wget -O ${{ runner.temp }}/hugo.deb \
+            https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb \
+          && sudo dpkg -i ${{ runner.temp }}/hugo.deb
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      - name: Build with Hugo
+        env:
+          HUGO_CACHEDIR: ${{ runner.temp }}/hugo_cache
+          HUGO_ENVIRONMENT: production
+        run: hugo --minify --baseURL "${{ steps.pages.outputs.base_url }}/"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./public
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

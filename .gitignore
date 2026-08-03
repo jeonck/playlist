@@ -1,0 +1,8 @@
+public/
+resources/
+.hugo_build.lock
+__pycache__/
+*.pyc
+pipeline/.run-result.json
+.DS_Store
+/tmp/

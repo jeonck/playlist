@@ -219,7 +219,8 @@ def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
     """yt-dlp로 캡션만 받는다(영상/오디오 다운로드 없음). (video_id, title, transcript) 반환."""
     cmd = [
         sys.executable, "-m", "yt_dlp", *cookies_args(),
-        "--skip-download", "--print", "%(id)s\t%(title)s", "--no-warnings", url,
+        "--skip-download", "--ignore-no-formats-error",
+        "--print", "%(id)s\t%(title)s", "--no-warnings", url,
     ]
     try:
         meta_result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -241,7 +242,7 @@ def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
     # files even with --write-sub — so subtitles are fetched in a separate, non-simulated call.
     sub_cmd = [
         sys.executable, "-m", "yt_dlp", *cookies_args(),
-        "--skip-download", "--write-sub", "--write-auto-sub",
+        "--skip-download", "--ignore-no-formats-error", "--write-sub", "--write-auto-sub",
         "--sub-langs", "en,en-US,en-GB,en-orig",
         "--sub-format", "vtt", "--no-warnings",
         "-o", str(workdir / "%(id)s.%(ext)s"), url,

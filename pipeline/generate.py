@@ -206,11 +206,19 @@ def vtt_to_text(vtt_content: str) -> str:
     return re.sub(r"\s+", " ", merged).strip()
 
 
+def cookies_args() -> list[str]:
+    """GitHub-hosted runner IPs are broadly flagged by YouTube's bot-check regardless
+    of which player client yt-dlp emulates; an authenticated session's cookies is the
+    only reliable current workaround (see README "Handling YouTube's bot-check").
+    """
+    cookies_file = os.environ.get("YT_COOKIES_FILE", "").strip()
+    return ["--cookies", cookies_file] if cookies_file and Path(cookies_file).exists() else []
+
+
 def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
     """yt-dlp로 캡션만 받는다(영상/오디오 다운로드 없음). (video_id, title, transcript) 반환."""
     cmd = [
-        sys.executable, "-m", "yt_dlp",
-        "--extractor-args", "youtube:player_client=android,web_safari",
+        sys.executable, "-m", "yt_dlp", *cookies_args(),
         "--skip-download", "--print", "%(id)s\t%(title)s", "--no-warnings", url,
     ]
     try:
@@ -232,8 +240,7 @@ def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
     # NOTE: --dump-json implies simulate mode and silently skips writing subtitle
     # files even with --write-sub — so subtitles are fetched in a separate, non-simulated call.
     sub_cmd = [
-        sys.executable, "-m", "yt_dlp",
-        "--extractor-args", "youtube:player_client=android,web_safari",
+        sys.executable, "-m", "yt_dlp", *cookies_args(),
         "--skip-download", "--write-sub", "--write-auto-sub",
         "--sub-langs", "en,en-US,en-GB,en-orig",
         "--sub-format", "vtt", "--no-warnings",

@@ -64,6 +64,18 @@ jobs:
           ISSUE_BODY: ${{ github.event.issue.body }}
         run: python3 pipeline/parse_issue.py
 
+      - name: Write YouTube cookies (if configured)
+        # GitHub-hosted runner IPs are broadly flagged by YouTube's bot-check
+        # ("Sign in to confirm you're not a bot") regardless of which player client
+        # yt-dlp emulates — an authenticated session's cookies is the only reliable
+        # workaround. See README "Handling YouTube's bot-check" for how to set this up.
+        if: ${{ secrets.YT_COOKIES != '' }}
+        env:
+          YT_COOKIES: ${{ secrets.YT_COOKIES }}
+        run: |
+          printf '%s\n' "$YT_COOKIES" > "$RUNNER_TEMP/yt-cookies.txt"
+          echo "YT_COOKIES_FILE=$RUNNER_TEMP/yt-cookies.txt" >> "$GITHUB_ENV"
+
       - name: Generate study post
         id: generate
         continue-on-error: true

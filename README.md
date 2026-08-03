@@ -60,10 +60,32 @@ add their GitHub username to that JSON array in both jobs of `process.yml`.
    Without this secret, `process.yml`'s generate step fails but the rest of the
    site still deploys — register the secret and re-approve the issue to retry.
 
-2. **GitHub Pages**: already enabled to build from GitHub Actions (see deploy
+2. **YouTube cookies — required in practice, not optional.** GitHub-hosted runner
+   IPs are broadly flagged by YouTube's bot-check ("Sign in to confirm you're not
+   a bot"), independent of which video or which yt-dlp player client is used —
+   confirmed by testing this repo's own pipeline against a video that fetches
+   fine from a residential IP but fails from Actions. Forcing `player_client`
+   did not help; an authenticated session's cookies is the current standard fix:
+   1. Log into youtube.com in a real browser with an account in good standing.
+   2. Export cookies in Netscape format, e.g. with the
+      [Get cookies.txt LOCALLY](https://chromewebstore.google.com/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+      extension (export "youtube.com" only), or run locally:
+      `yt-dlp --cookies-from-browser chrome --cookies cookies.txt --skip-download https://youtube.com`
+   3. Register it as a secret (reads the whole file as one secret value):
+      ```
+      gh secret set YT_COOKIES --repo jeonck/playlist < cookies.txt
+      ```
+   Without this secret, expect most/all approvals to fail with the bot-check
+   error above (the issue comment will say so) — `process.yml` only writes the
+   cookies file when the secret exists, so nothing breaks if you skip this, it
+   just won't work yet. Cookies expire eventually; if approvals that used to
+   work start failing with the same "Sign in to confirm" error, re-export and
+   re-run the `gh secret set` command.
+
+3. **GitHub Pages**: already enabled to build from GitHub Actions (see deploy
    steps below). No further action needed unless you recreate the repo.
 
-3. **Custom domain** (`playlist.metacog.co.kr`): point a CNAME record for that
+4. **Custom domain** (`playlist.metacog.co.kr`): point a CNAME record for that
    subdomain at `jeonck.github.io`, then confirm with:
    ```
    dig +short playlist.metacog.co.kr CNAME

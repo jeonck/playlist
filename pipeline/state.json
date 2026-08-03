@@ -1,5 +1,9 @@
 {
  "categories": {
+  "daily-conversation": {
+   "title": "Daily Conversation",
+   "weight": 2
+  },
   "society-ideas": {
    "title": "Society & Ideas",
    "weight": 1
@@ -13,6 +17,14 @@
    "path": "content/docs/society-ideas/do-schools-kill-creativity.md",
    "title": "Do Schools Kill Creativity?",
    "url": "https://playlist.metacog.co.kr/docs/society-ideas/do-schools-kill-creativity/"
+  },
+  "jNQXAC9IVRw": {
+   "category": "Daily Conversation",
+   "date": "2026-08-03",
+   "issue": 3,
+   "path": "content/docs/daily-conversation/a-quick-look-at-the-elephants.md",
+   "title": "A Quick Look at the Elephants",
+   "url": "https://playlist.metacog.co.kr/docs/daily-conversation/a-quick-look-at-the-elephants/"
   }
  }
 }

@@ -4,12 +4,24 @@
    "title": "Daily Conversation",
    "weight": 2
   },
+  "food-cooking": {
+   "title": "Food & Cooking",
+   "weight": 3
+  },
   "society-ideas": {
    "title": "Society & Ideas",
    "weight": 1
   }
  },
  "processed": {
+  "eagDA20_4cI": {
+   "category": "Food & Cooking",
+   "date": "2026-08-03",
+   "issue": 4,
+   "path": "content/docs/food-cooking/easy-peanut-butter-bibim-noodles-recipe.md",
+   "title": "Easy Peanut Butter Bibim Noodles Recipe",
+   "url": "https://playlist.metacog.co.kr/docs/food-cooking/easy-peanut-butter-bibim-noodles-recipe/"
+  },
   "iG9CE55wbtY": {
    "category": "Society & Ideas",
    "date": "2026-08-03",

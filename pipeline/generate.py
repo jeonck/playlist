@@ -2,10 +2,13 @@
 """YouTube → structured English study post, organized into a Hextra sidebar category.
 
 Given a YouTube URL (and optional note), this script:
-  1. Downloads the video's English captions (manual if available, else auto-generated)
-     via yt-dlp — no video/audio download.
-  2. Sends the cleaned transcript to Claude, which analyzes it AND picks the best-fit
-     study category (reusing an existing sidebar category when one fits).
+  1. Fetches the video's title via yt-dlp (no video/audio download), then tries to
+     download English captions (manual if available, else auto-generated).
+  2. Sends the transcript to Claude, which analyzes it AND picks the best-fit study
+     category (reusing an existing sidebar category when one fits). If no captions
+     are available, Claude instead writes a general lesson on the topic suggested by
+     the title alone — the published post is clearly marked as such, never passed
+     off as a summary of the actual video.
   3. Writes a Hextra content page under content/docs/<category-slug>/<post-slug>.md with:
        - a video embed
        - 💬 Idioms (meaning + 2 examples)
@@ -63,12 +66,28 @@ or manual captions, so fillers, mishearings, and transcription noise are expecte
 turn them into concise, encouraging study notes for intermediate learners. All output \
 is in natural English. When quoting the video, quote what was actually said in the \
 transcript and keep the speaker's intended meaning. Never invent quotes that are not \
-grounded in the transcript."""
+grounded in the transcript. Some videos have no captions available — for those you are \
+told so explicitly and given only the title; in that case write a general lesson on the \
+topic the title suggests, and do not pretend to quote or summarize the actual video."""
 
-# {transcript} / {note} / {existing_categories} 세 자리를 반드시 유지. JSON 스키마의
-# 이중 중괄호는 str.format() 이스케이프이므로 스키마를 고칠 때도 그대로 유지한다.
-GENERATE_PROMPT = """Below is a transcript from a YouTube video (captions — it may \
-contain fillers, transcription errors, and multiple speakers).{note} Analyze it and \
+TRANSCRIPT_INTRO = (
+    "Below is a transcript from a YouTube video (captions — it may contain fillers, "
+    "transcription errors, and multiple speakers)."
+)
+TITLE_ONLY_INTRO = (
+    "No transcript or captions are available for this video — only its title is known. "
+    "Instead of analyzing what was said, write a general English study lesson on the "
+    "topic this title suggests. Treat \"say_it_naturally\" pairs as natural "
+    "native-speaker phrasing on this topic versus a common learner mistake for the same "
+    "idea — illustrative writing, not quotes from the video, since none are available. "
+    "The \"summary\" should describe the likely topic, not claim to summarize the video's "
+    "actual content."
+)
+
+# {intro} / {note} / {existing_categories} / {source_label} / {source_content} 다섯 자리를
+# 반드시 유지. JSON 스키마의 이중 중괄호는 str.format() 이스케이프이므로 스키마를 고칠 때도
+# 그대로 유지한다.
+GENERATE_PROMPT = """{intro}{note} Analyze it and \
 produce study notes AND classify the video into a study category. Respond ONLY with \
 JSON in exactly this format, no other text:
 
@@ -108,7 +127,8 @@ too, not a one-off title tied to this single video):
 {existing_categories}
 
 Requirements: 2-4 idioms (each with exactly 2 examples), 4-8 vocabulary items,
-4-8 say_it_naturally entries grounded in things actually said in the video.
+4-8 say_it_naturally entries (grounded in things actually said in the video when a
+transcript is provided below; otherwise natural phrasing on the topic, per the note above).
 Diary rules: the diary is ONE coherent entry about ONE small everyday event
 inspired by the video's topic — not a list of disconnected sentences. Tell it as
 a natural mini-story with a beginning and end, weaving in 2-4 of the studied
@@ -125,8 +145,8 @@ agreement — inside the option text if needed). The same option set should not
 repeat across questions. Do not copy an example sentence from the
 idioms/vocabulary sections as a quiz sentence — write a fresh sentence.
 
-Transcript:
-{transcript}"""
+{source_label}:
+{source_content}"""
 
 # 포스트 본문 섹션 제목
 HEADING_OVERVIEW = "Video Overview"
@@ -215,21 +235,21 @@ def cookies_args() -> list[str]:
     return ["--cookies", cookies_file] if cookies_file and Path(cookies_file).exists() else []
 
 
-def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
-    """yt-dlp로 캡션만 받는다(영상/오디오 다운로드 없음). (video_id, title, transcript) 반환."""
+def fetch_video_info(url: str) -> tuple[str, str]:
+    """yt-dlp로 (video_id, title)만 받는다. 이게 실패하면 제목조차 없어 폴백도 불가능하다."""
     cmd = [
         sys.executable, "-m", "yt_dlp", *cookies_args(),
         "--skip-download", "--ignore-no-formats-error",
         "--print", "%(id)s\t%(title)s", "--no-warnings", url,
     ]
     try:
-        meta_result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired as exc:
         raise TranscriptError("timed out reading video info") from exc
-    if meta_result.returncode != 0:
-        err = (meta_result.stderr or meta_result.stdout).strip()
+    if result.returncode != 0:
+        err = (result.stderr or result.stdout).strip()
         raise TranscriptError(f"yt-dlp could not read this video — {err[-400:]}")
-    meta_line = next((l for l in meta_result.stdout.strip().splitlines() if "\t" in l), "")
+    meta_line = next((l for l in result.stdout.strip().splitlines() if "\t" in l), "")
     if not meta_line:
         raise TranscriptError("yt-dlp did not return video metadata")
     video_id, _, title = meta_line.partition("\t")
@@ -237,7 +257,12 @@ def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
     title = title.strip() or "Untitled video"
     if not video_id:
         raise TranscriptError("could not determine the video ID")
+    return video_id, title
 
+
+def fetch_captions(url: str, video_id: str, workdir: Path) -> str | None:
+    """가능하면 영어 자막을 텍스트로 반환한다. 자막이 없으면(에러가 아니라) None을 반환해
+    호출자가 제목만으로 폴백 생성할 수 있게 한다."""
     # NOTE: --dump-json implies simulate mode and silently skips writing subtitle
     # files even with --write-sub — so subtitles are fetched in a separate, non-simulated call.
     sub_cmd = [
@@ -248,12 +273,13 @@ def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
         "-o", str(workdir / "%(id)s.%(ext)s"), url,
     ]
     try:
-        sub_result = subprocess.run(sub_cmd, capture_output=True, text=True, timeout=180)
-    except subprocess.TimeoutExpired as exc:
-        raise TranscriptError("timed out downloading captions") from exc
-    if sub_result.returncode != 0:
-        err = (sub_result.stderr or sub_result.stdout).strip()
-        raise TranscriptError(f"yt-dlp could not fetch captions — {err[-400:]}")
+        result = subprocess.run(sub_cmd, capture_output=True, text=True, timeout=180)
+    except subprocess.TimeoutExpired:
+        log("  자막 다운로드 타임아웃 — 제목 기반 폴백으로 진행")
+        return None
+    if result.returncode != 0:
+        log(f"  자막 다운로드 실패 — 제목 기반 폴백으로 진행: {(result.stderr or result.stdout).strip()[-200:]}")
+        return None
 
     vtt_path = None
     for lang in ("en", "en-orig", "en-US", "en-GB"):
@@ -265,14 +291,9 @@ def fetch_transcript(url: str, workdir: Path) -> tuple[str, str, str]:
         remaining = sorted(workdir.glob(f"{video_id}.*.vtt"))
         vtt_path = remaining[0] if remaining else None
     if vtt_path is None:
-        raise TranscriptError(
-            "no English captions (manual or auto-generated) are available for this video"
-        )
-    raw = vtt_path.read_text(encoding="utf-8", errors="ignore")
-    text = vtt_to_text(raw)
-    if len(text) < 40:
-        raise TranscriptError("captions were found but the transcript text is too short")
-    return video_id, title, text
+        return None
+    text = vtt_to_text(vtt_path.read_text(encoding="utf-8", errors="ignore"))
+    return text if len(text) >= 40 else None
 
 
 class FatalAPIError(Exception):
@@ -314,17 +335,25 @@ def parse_result(text: str) -> dict | None:
     return data
 
 
-def build_prompt(transcript: str, note: str, existing_categories: list[dict]) -> str:
+def build_prompt(transcript: str | None, title: str, note: str, existing_categories: list[dict]) -> str:
     note_str = f" Notes from the person who requested this video: {note.strip()}" if note else ""
     if existing_categories:
         cat_str = "\n".join(f"- {c['title']}" for c in existing_categories)
     else:
         cat_str = "(none yet — this is the first post on the site)"
-    return GENERATE_PROMPT.format(transcript=transcript, note=note_str, existing_categories=cat_str)
+    if transcript is not None:
+        intro, source_label, source_content = TRANSCRIPT_INTRO, "Transcript", transcript
+    else:
+        intro, source_label, source_content = TITLE_ONLY_INTRO, "Video title", title
+    return GENERATE_PROMPT.format(
+        intro=intro, note=note_str, existing_categories=cat_str,
+        source_label=source_label, source_content=source_content,
+    )
 
 
-def generate_api(client, model: str, transcript: str, note: str, existing_categories: list[dict]) -> dict | None:
-    prompt = build_prompt(transcript, note, existing_categories)
+def generate_api(client, model: str, transcript: str | None, title: str, note: str,
+                  existing_categories: list[dict]) -> dict | None:
+    prompt = build_prompt(transcript, title, note, existing_categories)
     for attempt in (1, 2):
         try:
             response = client.messages.create(
@@ -348,8 +377,9 @@ def generate_api(client, model: str, transcript: str, note: str, existing_catego
     return None
 
 
-def generate_cli(model: str, transcript: str, note: str, existing_categories: list[dict]) -> dict | None:
-    prompt = build_prompt(transcript, note, existing_categories)
+def generate_cli(model: str, transcript: str | None, title: str, note: str,
+                  existing_categories: list[dict]) -> dict | None:
+    prompt = build_prompt(transcript, title, note, existing_categories)
     env = os.environ.copy()
     env.pop("ANTHROPIC_API_KEY", None)
     cmd = ["claude", "-p", "--model", model, "--tools", "",
@@ -416,7 +446,8 @@ weight: {cats[category_slug]['weight']}
     return category_dir
 
 
-def write_post(video_id: str, video_url: str, video_title: str, result: dict, date: datetime) -> Path:
+def write_post(video_id: str, video_url: str, video_title: str, result: dict, date: datetime,
+                grounded: bool) -> Path:
     category_slug = result["category_slug"]
     category_dir = CONTENT_DIR / category_slug
     base = slugify(result["title"])
@@ -441,11 +472,18 @@ def write_post(video_id: str, video_url: str, video_title: str, result: dict, da
         "</iframe></div>"
     )
 
+    disclaimer = (
+        "\n> ⚠️ No captions were available for this video, so this post is a general "
+        "lesson on the topic its title suggests — not a summary of what's actually said "
+        "in the video.\n"
+        if not grounded else ""
+    )
+
     sections = [
         f"""{embed}
 
 ## {HEADING_OVERVIEW}
-
+{disclaimer}
 {result['summary']}
 
 [Watch on YouTube ↗]({video_url})
@@ -579,13 +617,12 @@ def main() -> int:
     log(f"=== 생성 시작 (backend={backend}, model={model}, dry_run={args.dry_run}) ===")
     log(f"URL: {url}")
 
-    with tempfile.TemporaryDirectory() as tmp:
-        try:
-            video_id, video_title, transcript = fetch_transcript(url, Path(tmp))
-        except TranscriptError as exc:
-            log(f"  자막 확보 실패: {exc}")
-            write_result("failed", reason=str(exc))
-            return 1
+    try:
+        video_id, video_title = fetch_video_info(url)
+    except TranscriptError as exc:
+        log(f"  영상 정보 확보 실패: {exc}")
+        write_result("failed", reason=str(exc))
+        return 1
 
     if video_id in processed:
         prior = processed[video_id]
@@ -593,14 +630,20 @@ def main() -> int:
         write_result("skipped_duplicate", video_id=video_id, **prior)
         return 0
 
-    log(f"영상: {video_title} ({video_id}), 자막 {len(transcript)}자")
+    with tempfile.TemporaryDirectory() as tmp:
+        transcript = fetch_captions(url, video_id, Path(tmp))
+
+    if transcript is not None:
+        log(f"영상: {video_title} ({video_id}), 자막 {len(transcript)}자")
+    else:
+        log(f"영상: {video_title} ({video_id}), 자막 없음 — 제목 기반 폴백으로 생성")
 
     existing_categories = existing_categories_for_prompt(state)
     try:
         if backend == "claude-code":
-            result = generate_cli(model, transcript, args.note, existing_categories)
+            result = generate_cli(model, transcript, video_title, args.note, existing_categories)
         else:
-            result = generate_api(client, model, transcript, args.note, existing_categories)
+            result = generate_api(client, model, transcript, video_title, args.note, existing_categories)
     except FatalAPIError as exc:
         log(f"\n중단: 복구 불가능한 API 오류 — {exc}")
         write_result("failed", reason=f"Claude API error: {exc}")
@@ -620,7 +663,7 @@ def main() -> int:
 
     now = datetime.now(KST)
     ensure_category_index(result["category_slug"], result["category_title"], state)
-    path = write_post(video_id, url, video_title, result, now)
+    path = write_post(video_id, url, video_title, result, now, grounded=transcript is not None)
     rel_path = path.relative_to(ROOT).as_posix()
     log(f"  생성 파일: {rel_path}")
 
